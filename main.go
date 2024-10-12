@@ -1,48 +1,101 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
+	"os"
+	"log"
+	"text/template"
+	"strconv"
 )
 
-func main() {
-	// Handle the "/" route for GET and POST requests
-	http.HandleFunc("/", formHandler)
-	http.HandleFunc("/submit", submitHandler)
+// بنية (Struct) لبيانات الكتب
+type Book struct {
+	ID           int    `json:"id"`
+	Title        string `json:"title"`
+	Author       string `json:"author"`
+	PublishedYear int    `json:"published_year"`
+	Description  string `json:"description"`
+}
 
-	// Start the server
-	port := ":8080"
-	fmt.Printf("Server running on http://localhost%s\n", port)
-	if err := http.ListenAndServe(port, nil); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+type Library struct {
+	Books []Book `json:"books"`
+}
+
+// تحميل البيانات من ملف JSON
+func loadBooks() ([]Book, error) {
+	file, err := os.Open("books.json")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var library Library
+	err = json.NewDecoder(file).Decode(&library)
+	if err != nil {
+		return nil, err
+	}
+
+	return library.Books, nil
+}
+
+// عرض قائمة الكتب
+func booksHandler(w http.ResponseWriter, r *http.Request) {
+	books, err := loadBooks()
+	if err != nil {
+		http.Error(w, "Unable to load books", http.StatusInternalServerError)
+		return
+	}
+
+	tmpl , err := template.ParseFiles("books.html")
+	if err != nil {
+		http.Error(w, "Template not found", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tmpl.Execute(w, books); err != nil {
+		http.Error(w, "Error rendering template", http.StatusInternalServerError)
 	}
 }
 
-// formHandler handles GET requests and serves the form
-func formHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		// Serve the HTML form
-		http.ServeFile(w, r, "Templates/hh.html")
+// عرض تفاصيل كتاب معين
+func bookDetailsHandler(w http.ResponseWriter, r *http.Request) {
+	books, err := loadBooks()
+	if err != nil {
+		http.Error(w, "Unable to load books", http.StatusInternalServerError)
+		return
 	}
-}
 
-// submitHandler handles POST requests and processes the form data
-func submitHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		// Parse the form data
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "Error parsing form", http.StatusBadRequest)
-			return
+	// الحصول على معرف الكتاب من الرابط
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id < 1 || id > len(books) {
+		http.Error(w, "Book not found", http.StatusNotFound)
+		return
+	}
+
+	// البحث عن الكتاب المطلوب
+	var selectedBook Book
+	for _, book := range books {
+		if book.ID == id {
+			selectedBook = book
+			break
 		}
-
-		// Get form values
-		name := r.FormValue("name")
-		message := r.FormValue("message")
-
-		// Display the form values
-		fmt.Fprintf(w, "Received POST request!\n")
-		fmt.Fprintf(w, "Name: %s\n", name)
-		fmt.Fprintf(w, "Message: %s\n", message)
 	}
+
+	tmpl := template.Must(template.ParseFiles("book_details.html"))
+	if err := tmpl.Execute(w, selectedBook); err != nil {
+		http.Error(w, "Error rendering template", http.StatusInternalServerError)
+	}
+}
+
+func main() {
+	// إعداد المسارات
+	http.HandleFunc("/", booksHandler)
+	http.HandleFunc("/book", bookDetailsHandler)
+
+	// تشغيل الخادم على المنفذ 8080
+	fmt.Println("Server is running at http://localhost:8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
